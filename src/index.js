@@ -6,8 +6,9 @@ import {
   ButtonBuilder,
   ButtonStyle,
   EmbedBuilder,
+  StringSelectMenuBuilder,
 } from "discord.js";
-import { addCafe, listCafes } from "./db.js";
+import { addCafe, listCafes, deleteCafe } from "./db.js";
 
 const { DISCORD_TOKEN } = process.env;
 if (!DISCORD_TOKEN) {
@@ -38,8 +39,11 @@ client.on("interactionCreate", async (interaction) => {
     if (interaction.isChatInputCommand()) {
       if (interaction.commandName === "logcafe") return handleLogCafe(interaction);
       if (interaction.commandName === "cafes") return handleListCafes(interaction);
+      if (interaction.commandName === "deletecafe") return handleDeleteCafePrompt(interaction);
     } else if (interaction.isButton()) {
       if (interaction.customId.startsWith("star:")) return handleStarClick(interaction);
+    } else if (interaction.isStringSelectMenu()) {
+      if (interaction.customId === "delcafe") return handleDeleteCafeSelect(interaction);
     }
   } catch (err) {
     console.error("Interaction error:", err);
@@ -147,6 +151,52 @@ async function handleListCafes(interaction) {
   }
 
   await interaction.reply({ embeds: [embed] });
+}
+
+async function handleDeleteCafePrompt(interaction) {
+  const rows = listCafes(interaction.guildId);
+
+  if (rows.length === 0) {
+    return interaction.reply({ content: "Nothing to delete — no cafes logged yet.", ephemeral: true });
+  }
+
+  // String select menus allow at most 25 options; offer the most recent 25.
+  const options = rows.slice(0, 25).map((r) => {
+    const date = new Date(r.logged_at).toISOString().slice(0, 10);
+    return {
+      label: r.name.slice(0, 100),
+      description: `${starsText(r.stars)} · ${date} · by ${r.logged_name}`.slice(0, 100),
+      value: String(r.id),
+    };
+  });
+
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId("delcafe")
+    .setPlaceholder("Pick a cafe to delete")
+    .addOptions(options);
+
+  const note =
+    rows.length > 25 ? "\n_(showing the 25 most recent)_" : "";
+
+  await interaction.reply({
+    content: `Which cafe should I delete?${note}`,
+    components: [new ActionRowBuilder().addComponents(menu)],
+    ephemeral: true,
+  });
+}
+
+async function handleDeleteCafeSelect(interaction) {
+  const id = Number(interaction.values[0]);
+  const removed = deleteCafe(id, interaction.guildId);
+
+  if (!removed) {
+    return interaction.update({ content: "That cafe was already deleted.", components: [] });
+  }
+
+  await interaction.update({
+    content: `🗑️ Deleted **${removed.name}** — ${starsText(removed.stars)}`,
+    components: [],
+  });
 }
 
 client.login(DISCORD_TOKEN);

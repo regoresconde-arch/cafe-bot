@@ -9,6 +9,7 @@ star review. Logs are shared per server.
 | --- | --- |
 | `/logcafe name:<cafe> [notes:<text>]` | Stores the cafe name exactly as you type it, then shows ⭐1–5 buttons. Click one to save the visit. |
 | `/cafes` | Lists every cafe logged in this server with stars, who logged it, and when. |
+| `/deletecafe` | Pops up a dropdown of logged cafes; pick one to remove it. |
 
 ## Setup
 

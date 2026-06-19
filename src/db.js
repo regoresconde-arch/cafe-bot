@@ -54,3 +54,13 @@ export function listCafes(guildId) {
     .filter((c) => c.guild_id === guildId)
     .sort((a, b) => (a.logged_at < b.logged_at ? 1 : a.logged_at > b.logged_at ? -1 : 0));
 }
+
+// Delete one entry by id, scoped to its guild. Returns the removed entry, or
+// null if nothing matched.
+export function deleteCafe(id, guildId) {
+  const idx = state.cafes.findIndex((c) => c.id === id && c.guild_id === guildId);
+  if (idx === -1) return null;
+  const [removed] = state.cafes.splice(idx, 1);
+  persist();
+  return removed;
+}

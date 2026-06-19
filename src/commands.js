@@ -23,4 +23,9 @@ export const commands = [
     .setName("cafes")
     .setDescription("List every cafe logged in this server with stars and date.")
     .toJSON(),
+
+  new SlashCommandBuilder()
+    .setName("deletecafe")
+    .setDescription("Remove a logged cafe (pick it from a dropdown).")
+    .toJSON(),
 ];
