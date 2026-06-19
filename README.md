@@ -1,13 +1,14 @@
 # ☕ Cafe Bot
 
 A Discord bot with slash commands for logging cafes you've visited and giving them a
-star review. Logs are shared per server.
+star review. Logs are shared per server. `/logcafe` has live autocomplete that
+suggests real **Philippine** cafes via the Google Places API.
 
 ## Commands
 
 | Command | What it does |
 | --- | --- |
-| `/logcafe name:<cafe> [notes:<text>]` | Stores the cafe name exactly as you type it, then shows ⭐1–5 buttons. Click one to save the visit. |
+| `/logcafe name:<cafe> [notes:<text>]` | As you type, suggests real PH cafes (Google Places). Pick one to store its exact name + address, then ⭐1–5 buttons to save the visit. Free-typed text also works if no key is set. |
 | `/cafes` | Lists every cafe logged in this server with stars, who logged it, and when. |
 | `/deletecafe` | Pops up a dropdown of logged cafes; pick one to remove it. |
 
@@ -30,6 +31,14 @@ posts messages). Open the generated URL and add the bot to your server.
 cp .env.example .env
 ```
 Fill in `DISCORD_TOKEN`, `CLIENT_ID`, and `GUILD_ID` in `.env`.
+
+For cafe autocomplete, also set `GOOGLE_MAPS_API_KEY`:
+1. In the [Google Cloud Console](https://console.cloud.google.com/google/maps-apis),
+   create a project and enable **Places API (New)**.
+2. Create an **API key** under *Credentials*.
+3. Recommended: restrict the key to the *Places API (New)*.
+The bot calls Places autocomplete restricted to the Philippines (`includedRegionCodes: ["ph"]`).
+If the key is omitted, `/logcafe` still works and stores names as typed.
 
 ### 4. Install, register commands, run
 ```sh

@@ -8,8 +8,9 @@ export const commands = [
     .addStringOption((opt) =>
       opt
         .setName("name")
-        .setDescription("Name of the cafe (and city helps the lookup, e.g. 'Blue Bottle, Tokyo')")
-        .setRequired(true),
+        .setDescription("Start typing a cafe name — pick a Philippine cafe from the suggestions")
+        .setRequired(true)
+        .setAutocomplete(true),
     )
     .addStringOption((opt) =>
       opt

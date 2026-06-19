@@ -9,6 +9,7 @@ import {
   StringSelectMenuBuilder,
 } from "discord.js";
 import { addCafe, listCafes, deleteCafe } from "./db.js";
+import { autocompleteCafes, getPlaceDetails, mapsUrl } from "./places.js";
 
 const { DISCORD_TOKEN } = process.env;
 if (!DISCORD_TOKEN) {
@@ -30,6 +31,15 @@ function makeToken() {
 const STAR = "⭐";
 const starsText = (n) => STAR.repeat(n) + "☆".repeat(5 - n);
 
+// Maps an autocomplete choice's submitted value -> the resolved cafe, captured
+// at autocomplete time so picking a suggestion needs no extra API call. Trimmed
+// to a rough cap so it can't grow without bound.
+const placeCache = new Map();
+function rememberPlace(value, info) {
+  placeCache.set(value, info);
+  if (placeCache.size > 1000) placeCache.delete(placeCache.keys().next().value);
+}
+
 client.once("clientReady", (c) => {
   console.log(`Logged in as ${c.user.tag}`);
 });
@@ -44,6 +54,8 @@ client.on("interactionCreate", async (interaction) => {
       if (interaction.customId.startsWith("star:")) return handleStarClick(interaction);
     } else if (interaction.isStringSelectMenu()) {
       if (interaction.customId === "delcafe") return handleDeleteCafeSelect(interaction);
+    } else if (interaction.isAutocomplete()) {
+      if (interaction.commandName === "logcafe") return handleLogCafeAutocomplete(interaction);
     }
   } catch (err) {
     console.error("Interaction error:", err);
@@ -53,16 +65,52 @@ client.on("interactionCreate", async (interaction) => {
   }
 });
 
+async function handleLogCafeAutocomplete(interaction) {
+  const focused = interaction.options.getFocused();
+  const results = await autocompleteCafes(focused);
+
+  const choices = results.slice(0, 25).map((r) => {
+    // Submit the place id (prefixed) so the handler knows a real cafe was chosen.
+    let value = `g:${r.placeId}`;
+    if (value.length > 100) value = r.name.slice(0, 100); // Discord value cap
+    rememberPlace(value, { name: r.name, address: r.address, placeId: r.placeId });
+    const label = (r.address ? `${r.name} — ${r.address}` : r.name).slice(0, 100);
+    return { name: label, value };
+  });
+
+  await interaction.respond(choices);
+}
+
 async function handleLogCafe(interaction) {
-  const name = interaction.options.getString("name", true);
+  const raw = interaction.options.getString("name", true);
   const notes = interaction.options.getString("notes") ?? null;
+
+  // Resolve the cafe: a picked suggestion (cache hit, or details fallback on a
+  // cache miss) vs. plain typed text (stored as-is).
+  let name = raw;
+  let address = null;
+  let placeId = null;
+
+  const cached = placeCache.get(raw);
+  if (cached) {
+    ({ name, address, placeId } = cached);
+  } else if (raw.startsWith("g:")) {
+    await interaction.deferReply({ ephemeral: true });
+    placeId = raw.slice(2);
+    const details = await getPlaceDetails(placeId);
+    if (!details?.name) {
+      return interaction.editReply("Couldn't fetch that cafe just now — try `/logcafe` again.");
+    }
+    name = details.name;
+    address = details.address;
+  }
 
   const token = makeToken();
   pending.set(token, {
     name,
-    address: null,
+    address,
     notes,
-    mapUrl: null,
+    mapUrl: placeId ? mapsUrl(placeId) : null,
     loggedBy: interaction.user.id,
     loggedName: interaction.member?.displayName ?? interaction.user.username,
     guildId: interaction.guildId,
@@ -79,11 +127,16 @@ async function handleLogCafe(interaction) {
     ),
   );
 
-  await interaction.reply({
-    content: `**${name}**\n\nHow many stars?`,
-    components: [row],
-    ephemeral: true,
-  });
+  const content = [`**${name}**`, address ?? null, "", "How many stars?"]
+    .filter((l) => l !== null)
+    .join("\n");
+
+  // If we deferred (cache-miss fallback), we must edit rather than reply.
+  if (interaction.deferred) {
+    await interaction.editReply({ content, components: [row] });
+  } else {
+    await interaction.reply({ content, components: [row], ephemeral: true });
+  }
 }
 
 async function handleStarClick(interaction) {
