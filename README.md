@@ -1,18 +1,14 @@
 # ☕ Cafe Bot
 
 A Discord bot with slash commands for logging cafes you've visited and giving them a
-star review. Logs are shared per server. Cafe names are optionally recognized via
-OpenStreetMap (no API key needed).
+star review. Logs are shared per server.
 
 ## Commands
 
 | Command | What it does |
 | --- | --- |
-| `/logcafe name:<cafe> [notes:<text>]` | Looks the cafe up on OpenStreetMap, then shows ⭐1–5 buttons. Click one to save the visit. |
+| `/logcafe name:<cafe> [notes:<text>]` | Stores the cafe name exactly as you type it, then shows ⭐1–5 buttons. Click one to save the visit. |
 | `/cafes` | Lists every cafe logged in this server with stars, who logged it, and when. |
-
-When you log a cafe, the bot tries to match it online and fills in the real name and
-address. If nothing matches, it just stores the name you typed.
 
 ## Setup
 
@@ -47,8 +43,5 @@ npm start          # starts the bot
 - Storage is a local JSON file (`cafes.json`) with atomic writes — no database server,
   no native build step, and no special Node version required (runs on **Node 18+**).
   Plenty for a personal-scale cafe log.
-- OpenStreetMap's Nominatim service is free; set `OSM_CONTACT` in `.env` to a contact
-  string per their usage policy. Lookups fail gracefully — logging always works even if
-  the lookup is down.
 - `/cafes` shows the 25 most recent entries (a Discord embed limit). Easy to paginate
   later if your list grows.

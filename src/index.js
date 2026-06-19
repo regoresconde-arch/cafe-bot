@@ -8,7 +8,6 @@ import {
   EmbedBuilder,
 } from "discord.js";
 import { addCafe, listCafes } from "./db.js";
-import { lookupCafe } from "./osm.js";
 
 const { DISCORD_TOKEN } = process.env;
 if (!DISCORD_TOKEN) {
@@ -51,22 +50,15 @@ client.on("interactionCreate", async (interaction) => {
 });
 
 async function handleLogCafe(interaction) {
-  const query = interaction.options.getString("name", true);
+  const name = interaction.options.getString("name", true);
   const notes = interaction.options.getString("notes") ?? null;
-
-  await interaction.deferReply({ ephemeral: true });
-
-  // Optional recognition — falls back to exactly what the user typed.
-  const match = await lookupCafe(query);
-  const name = match?.name ?? query;
-  const address = match?.address ?? null;
 
   const token = makeToken();
   pending.set(token, {
     name,
-    address,
+    address: null,
     notes,
-    mapUrl: match?.mapUrl ?? null,
+    mapUrl: null,
     loggedBy: interaction.user.id,
     loggedName: interaction.member?.displayName ?? interaction.user.username,
     guildId: interaction.guildId,
@@ -83,12 +75,11 @@ async function handleLogCafe(interaction) {
     ),
   );
 
-  const lines = [`**${name}**`];
-  if (address) lines.push(address);
-  if (!match) lines.push("_(no internet match found — logging the name as typed)_");
-  lines.push("", "How many stars?");
-
-  await interaction.editReply({ content: lines.join("\n"), components: [row] });
+  await interaction.reply({
+    content: `**${name}**\n\nHow many stars?`,
+    components: [row],
+    ephemeral: true,
+  });
 }
 
 async function handleStarClick(interaction) {
