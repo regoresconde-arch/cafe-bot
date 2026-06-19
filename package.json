@@ -1,0 +1,17 @@
+{
+  "name": "cafe-bot",
+  "version": "1.0.0",
+  "description": "A Discord bot to log cafes you've visited with star reviews.",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "register": "node src/deploy-commands.js",
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "discord.js": "^14.16.3",
+    "dotenv": "^16.4.7"
+  }
+}
