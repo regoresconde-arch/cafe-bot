@@ -1,16 +1,28 @@
-# ☕ Cafe Bot
+# ☕ Log Bot
 
-A Discord bot with slash commands for logging cafes you've visited and giving them a
-star review. Logs are shared per server. `/logcafe` has live autocomplete that
-suggests real **Philippine** cafes via the Google Places API.
+A Discord bot for logging things you've experienced — cafes, restaurants, anime,
+TV shows, and movies — each with a ⭐1–5 star review. Logs are shared per server.
+Every log command has live autocomplete that recognizes the real title/place.
 
 ## Commands
 
-| Command | What it does |
-| --- | --- |
-| `/logcafe name:<cafe> [notes:<text>]` | As you type, suggests real PH cafes (Google Places). Pick one to store its exact name + address, then ⭐1–5 buttons to save the visit. Free-typed text also works if no key is set. |
-| `/cafes` | Lists every cafe logged in this server with stars, who logged it, and when. |
-| `/deletecafe` | Pops up a dropdown of logged cafes; pick one to remove it. |
+Each category has three commands (`log` / list / `delete`):
+
+| Category | Log | List | Delete | Recognized via |
+| --- | --- | --- | --- | --- |
+| Cafes | `/logcafe` | `/cafes` | `/deletecafe` | Google Places (PH) |
+| Restaurants | `/logresto` | `/restos` | `/deleteresto` | Google Places (PH) |
+| Anime | `/loganime` | `/animes` | `/deleteanime` | Jikan / MyAnimeList (no key) |
+| TV shows | `/logshow` | `/shows` | `/deleteshow` | TMDB |
+| Movies | `/logmovie` | `/movies` | `/deletemovie` | TMDB |
+
+- **Log**: start typing the name — suggestions appear; pick one (or type freely),
+  then click a star to save. Run it in the matching channel and the public log
+  posts there.
+- **List**: shows that category's entries with stars, who logged it, and when.
+- **Delete**: pick an entry from a dropdown to remove it.
+
+Add a new category by adding one line to [`src/categories.js`](src/categories.js).
 
 ## Setup
 
@@ -32,13 +44,17 @@ cp .env.example .env
 ```
 Fill in `DISCORD_TOKEN`, `CLIENT_ID`, and `GUILD_ID` in `.env`.
 
-For cafe autocomplete, also set `GOOGLE_MAPS_API_KEY`:
-1. In the [Google Cloud Console](https://console.cloud.google.com/google/maps-apis),
-   create a project and enable **Places API (New)**.
-2. Create an **API key** under *Credentials*.
-3. Recommended: restrict the key to the *Places API (New)*.
-The bot calls Places autocomplete restricted to the Philippines (`includedRegionCodes: ["ph"]`).
-If the key is omitted, `/logcafe` still works and stores names as typed.
+Optional API keys for autocomplete (each is independent — omit one and that
+category just stores names as typed; anime needs no key):
+
+- **`GOOGLE_MAPS_API_KEY`** — cafes & restaurants (PH).
+  In the [Google Cloud Console](https://console.cloud.google.com/google/maps-apis),
+  create a project, enable **Places API (New)**, create an **API key**, and
+  (recommended) restrict it to *Places API (New)*. Region-locked to the
+  Philippines (`includedRegionCodes: ["ph"]`).
+- **`TMDB_API_KEY`** — movies & TV shows.
+  Get a free **API Key (v3 auth)** at
+  [themoviedb.org/settings/api](https://www.themoviedb.org/settings/api). No billing.
 
 ### 4. Install, register commands, run
 ```sh
@@ -52,6 +68,6 @@ npm start          # starts the bot
 ## Notes
 - Storage is a local JSON file (`cafes.json`) with atomic writes — no database server,
   no native build step, and no special Node version required (runs on **Node 18+**).
-  Plenty for a personal-scale cafe log.
-- `/cafes` shows the 25 most recent entries (a Discord embed limit). Easy to paginate
-  later if your list grows.
+  All categories share this file, tagged by category.
+- List commands show the 25 most recent entries (a Discord embed limit). Easy to
+  paginate later if your lists grow.

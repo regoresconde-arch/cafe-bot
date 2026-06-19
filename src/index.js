@@ -8,8 +8,11 @@ import {
   EmbedBuilder,
   StringSelectMenuBuilder,
 } from "discord.js";
-import { addCafe, listCafes, deleteCafe } from "./db.js";
-import { autocompleteCafes, getPlaceDetails, mapsUrl } from "./places.js";
+import { addEntry, listEntries, deleteEntry } from "./db.js";
+import { CATEGORIES, logName, deleteName, byKey } from "./categories.js";
+import { placesAutocomplete, placeDetails } from "./places.js";
+import { tmdbSearch, tmdbDetails } from "./tmdb.js";
+import { animeSearch, animeDetails } from "./anime.js";
 
 const { DISCORD_TOKEN } = process.env;
 if (!DISCORD_TOKEN) {
@@ -19,10 +22,22 @@ if (!DISCORD_TOKEN) {
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
-// Pending logs awaiting a star click, keyed by a short token embedded in the
-// button customId. Cleared after it's used or after a timeout.
+// Command-name -> category lookups, built from the shared config.
+const byLog = new Map(CATEGORIES.map((c) => [logName(c.key), c]));
+const byList = new Map(CATEGORIES.map((c) => [c.plural, c]));
+const byDelete = new Map(CATEGORIES.map((c) => [deleteName(c.key), c]));
+
+// Pending logs awaiting a star click, keyed by a short token in the button id.
 const pending = new Map();
-const PENDING_TTL_MS = 10 * 60 * 1000; // 10 minutes
+const PENDING_TTL_MS = 10 * 60 * 1000;
+
+// Resolved picks from autocomplete, keyed by the choice's submitted value, so
+// selecting a suggestion needs no extra API call. Lightly capped.
+const pickCache = new Map();
+function rememberPick(value, info) {
+  pickCache.set(value, info);
+  if (pickCache.size > 2000) pickCache.delete(pickCache.keys().next().value);
+}
 
 function makeToken() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -30,15 +45,27 @@ function makeToken() {
 
 const STAR = "⭐";
 const starsText = (n) => STAR.repeat(n) + "☆".repeat(5 - n);
+const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
-// Maps an autocomplete choice's submitted value -> the resolved cafe, captured
-// at autocomplete time so picking a suggestion needs no extra API call. Trimmed
-// to a rough cap so it can't grow without bound.
-const placeCache = new Map();
-function rememberPlace(value, info) {
-  placeCache.set(value, info);
-  if (placeCache.size > 1000) placeCache.delete(placeCache.keys().next().value);
+// --- lookup dispatch -------------------------------------------------------
+
+async function lookupAutocomplete(cat, input) {
+  const l = cat.lookup;
+  if (l.kind === "places") return placesAutocomplete(input, l.type);
+  if (l.kind === "tmdb") return tmdbSearch(l.type, input);
+  if (l.kind === "anime") return animeSearch(input);
+  return [];
 }
+
+async function lookupDetails(cat, id) {
+  const l = cat.lookup;
+  if (l.kind === "places") return placeDetails(id);
+  if (l.kind === "tmdb") return tmdbDetails(l.type, id);
+  if (l.kind === "anime") return animeDetails(id);
+  return null;
+}
+
+// --- event routing ---------------------------------------------------------
 
 client.once("clientReady", (c) => {
   console.log(`Logged in as ${c.user.tag}`);
@@ -47,15 +74,18 @@ client.once("clientReady", (c) => {
 client.on("interactionCreate", async (interaction) => {
   try {
     if (interaction.isChatInputCommand()) {
-      if (interaction.commandName === "logcafe") return handleLogCafe(interaction);
-      if (interaction.commandName === "cafes") return handleListCafes(interaction);
-      if (interaction.commandName === "deletecafe") return handleDeleteCafePrompt(interaction);
+      const n = interaction.commandName;
+      if (byLog.has(n)) return handleLog(interaction, byLog.get(n));
+      if (byList.has(n)) return handleList(interaction, byList.get(n));
+      if (byDelete.has(n)) return handleDeletePrompt(interaction, byDelete.get(n));
+    } else if (interaction.isAutocomplete()) {
+      if (byLog.has(interaction.commandName)) {
+        return handleAutocomplete(interaction, byLog.get(interaction.commandName));
+      }
     } else if (interaction.isButton()) {
       if (interaction.customId.startsWith("star:")) return handleStarClick(interaction);
     } else if (interaction.isStringSelectMenu()) {
-      if (interaction.customId === "delcafe") return handleDeleteCafeSelect(interaction);
-    } else if (interaction.isAutocomplete()) {
-      if (interaction.commandName === "logcafe") return handleLogCafeAutocomplete(interaction);
+      if (interaction.customId.startsWith("del:")) return handleDeleteSelect(interaction);
     }
   } catch (err) {
     console.error("Interaction error:", err);
@@ -65,52 +95,57 @@ client.on("interactionCreate", async (interaction) => {
   }
 });
 
-async function handleLogCafeAutocomplete(interaction) {
-  const focused = interaction.options.getFocused();
-  const results = await autocompleteCafes(focused);
+// --- handlers --------------------------------------------------------------
 
-  const choices = results.slice(0, 25).map((r) => {
-    // Submit the place id (prefixed) so the handler knows a real cafe was chosen.
-    let value = `g:${r.placeId}`;
-    if (value.length > 100) value = r.name.slice(0, 100); // Discord value cap
-    rememberPlace(value, { name: r.name, address: r.address, placeId: r.placeId });
-    const label = (r.address ? `${r.name} — ${r.address}` : r.name).slice(0, 100);
-    return { name: label, value };
-  });
+async function handleAutocomplete(interaction, cat) {
+  const focused = interaction.options.getFocused();
+  const results = await lookupAutocomplete(cat, focused);
+
+  const seen = new Set();
+  const choices = [];
+  for (const r of results) {
+    // "#<id>" marks a real pick; the cache holds its resolved fields.
+    let value = `#${r.id}`;
+    if (value.length > 100) value = r.name.slice(0, 100);
+    if (seen.has(value)) continue; // Discord rejects duplicate choice values
+    seen.add(value);
+    rememberPick(value, { name: r.name, subtitle: r.subtitle, link: r.link });
+    const label = (r.subtitle ? `${r.name} — ${r.subtitle}` : r.name).slice(0, 100);
+    choices.push({ name: label, value });
+    if (choices.length >= 25) break;
+  }
 
   await interaction.respond(choices);
 }
 
-async function handleLogCafe(interaction) {
+async function handleLog(interaction, cat) {
   const raw = interaction.options.getString("name", true);
   const notes = interaction.options.getString("notes") ?? null;
 
-  // Resolve the cafe: a picked suggestion (cache hit, or details fallback on a
-  // cache miss) vs. plain typed text (stored as-is).
   let name = raw;
-  let address = null;
-  let placeId = null;
+  let subtitle = null;
+  let link = null;
 
-  const cached = placeCache.get(raw);
+  const cached = pickCache.get(raw);
   if (cached) {
-    ({ name, address, placeId } = cached);
-  } else if (raw.startsWith("g:")) {
+    ({ name, subtitle, link } = cached);
+  } else if (raw.startsWith("#")) {
+    // A suggestion was chosen but the cache was lost (e.g. restart) — resolve it.
     await interaction.deferReply({ ephemeral: true });
-    placeId = raw.slice(2);
-    const details = await getPlaceDetails(placeId);
+    const details = await lookupDetails(cat, raw.slice(1));
     if (!details?.name) {
-      return interaction.editReply("Couldn't fetch that cafe just now — try `/logcafe` again.");
+      return interaction.editReply(`Couldn't fetch that ${cat.noun} just now — try \`/${logName(cat.key)}\` again.`);
     }
-    name = details.name;
-    address = details.address;
+    ({ name, subtitle, link } = details);
   }
 
   const token = makeToken();
   pending.set(token, {
+    category: cat.key,
     name,
-    address,
+    subtitle,
     notes,
-    mapUrl: placeId ? mapsUrl(placeId) : null,
+    link,
     loggedBy: interaction.user.id,
     loggedName: interaction.member?.displayName ?? interaction.user.username,
     guildId: interaction.guildId,
@@ -127,11 +162,10 @@ async function handleLogCafe(interaction) {
     ),
   );
 
-  const content = [`**${name}**`, address ?? null, "", "How many stars?"]
+  const content = [`**${name}**`, subtitle, "", "How many stars?"]
     .filter((l) => l !== null)
     .join("\n");
 
-  // If we deferred (cache-miss fallback), we must edit rather than reply.
   if (interaction.deferred) {
     await interaction.editReply({ content, components: [row] });
   } else {
@@ -145,75 +179,69 @@ async function handleStarClick(interaction) {
   const data = pending.get(token);
 
   if (!data) {
-    return interaction.update({
-      content: "This rating prompt expired. Run `/logcafe` again.",
-      components: [],
-    });
+    return interaction.update({ content: "This rating prompt expired. Run the log command again.", components: [] });
   }
   if (interaction.user.id !== data.loggedBy) {
     return interaction.reply({ content: "Only the person who started this log can rate it.", ephemeral: true });
   }
 
   pending.delete(token);
-  addCafe({ ...data, stars });
+  addEntry({ ...data, stars });
 
-  // Private confirmation (the prompt was ephemeral)...
+  const cat = byKey(data.category);
   await interaction.update({
     content: `Logged **${data.name}** — ${starsText(stars)}`,
     components: [],
   });
 
-  // ...plus a public note in the channel so the shared log feels alive.
   const embed = new EmbedBuilder()
-    .setTitle(`☕ ${data.name}`)
-    .setDescription(starsText(stars))
+    .setTitle(`${cat?.emoji ?? ""} ${data.name}`.trim())
+    .setDescription([starsText(stars), data.subtitle].filter(Boolean).join("\n"))
     .setFooter({ text: `Logged by ${data.loggedName}` })
     .setTimestamp(new Date());
-  if (data.address) embed.addFields({ name: "Where", value: data.address });
   if (data.notes) embed.addFields({ name: "Notes", value: data.notes });
-  if (data.mapUrl) embed.setURL(data.mapUrl);
+  if (data.link) embed.setURL(data.link);
 
   await interaction.followUp({ embeds: [embed] });
 }
 
-async function handleListCafes(interaction) {
-  const rows = listCafes(interaction.guildId);
+async function handleList(interaction, cat) {
+  const rows = listEntries(interaction.guildId, cat.key);
 
   if (rows.length === 0) {
     return interaction.reply({
-      content: "No cafes logged yet. Use `/logcafe` to add the first one!",
+      content: `No ${cat.plural} logged yet. Use \`/${logName(cat.key)}\` to add the first one!`,
       ephemeral: true,
     });
   }
 
   const embed = new EmbedBuilder()
-    .setTitle("☕ Logged Cafes")
+    .setTitle(`${cat.emoji} Logged ${cap(cat.plural)}`)
     .setColor(0xa9744f)
-    .setFooter({ text: `${rows.length} cafe${rows.length === 1 ? "" : "s"} logged` });
+    .setFooter({ text: `${rows.length} logged` });
 
-  // Discord embeds cap at 25 fields; show the most recent 25.
   for (const r of rows.slice(0, 25)) {
     const when = `<t:${Math.floor(new Date(r.logged_at).getTime() / 1000)}:R>`;
     const parts = [`${starsText(r.stars)} · ${when} · by ${r.logged_name}`];
-    if (r.notes) parts.push(`_${r.notes}_`);
+    if (r.subtitle) parts.push(`_${r.subtitle}_`);
+    if (r.notes) parts.push(r.notes);
     embed.addFields({ name: r.name, value: parts.join("\n") });
   }
 
   if (rows.length > 25) {
-    embed.setDescription(`Showing the 25 most recent of ${rows.length} logged cafes.`);
+    embed.setDescription(`Showing the 25 most recent of ${rows.length}.`);
   }
 
   await interaction.reply({ embeds: [embed] });
 }
 
-async function handleDeleteCafePrompt(interaction) {
-  const rows = listCafes(interaction.guildId);
+async function handleDeletePrompt(interaction, cat) {
+  const rows = listEntries(interaction.guildId, cat.key);
 
   if (rows.length === 0) {
-    return interaction.reply({ content: "Nothing to delete — no cafes logged yet.", ephemeral: true });
+    return interaction.reply({ content: `Nothing to delete — no ${cat.plural} logged yet.`, ephemeral: true });
   }
 
-  // String select menus allow at most 25 options; offer the most recent 25.
   const options = rows.slice(0, 25).map((r) => {
     const date = new Date(r.logged_at).toISOString().slice(0, 10);
     return {
@@ -224,26 +252,25 @@ async function handleDeleteCafePrompt(interaction) {
   });
 
   const menu = new StringSelectMenuBuilder()
-    .setCustomId("delcafe")
-    .setPlaceholder("Pick a cafe to delete")
+    .setCustomId(`del:${cat.key}`)
+    .setPlaceholder(`Pick a ${cat.noun} to delete`)
     .addOptions(options);
 
-  const note =
-    rows.length > 25 ? "\n_(showing the 25 most recent)_" : "";
-
+  const note = rows.length > 25 ? "\n_(showing the 25 most recent)_" : "";
   await interaction.reply({
-    content: `Which cafe should I delete?${note}`,
+    content: `Which ${cat.noun} should I delete?${note}`,
     components: [new ActionRowBuilder().addComponents(menu)],
     ephemeral: true,
   });
 }
 
-async function handleDeleteCafeSelect(interaction) {
+async function handleDeleteSelect(interaction) {
+  const category = interaction.customId.split(":")[1];
   const id = Number(interaction.values[0]);
-  const removed = deleteCafe(id, interaction.guildId);
+  const removed = deleteEntry(id, interaction.guildId, category);
 
   if (!removed) {
-    return interaction.update({ content: "That cafe was already deleted.", components: [] });
+    return interaction.update({ content: "That entry was already deleted.", components: [] });
   }
 
   await interaction.update({

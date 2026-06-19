@@ -1,6 +1,5 @@
-// Google Places API (New) lookup, restricted to the Philippines and to cafes.
-// Powers the live autocomplete on /logcafe. Every function degrades to a safe
-// empty/null result on error so logging keeps working even if the API is down.
+// Google Places API (New) lookup, restricted to the Philippines. Used for cafes
+// and restaurants. Degrades to empty/null on any error so logging still works.
 
 const API_KEY = process.env.GOOGLE_MAPS_API_KEY;
 const AUTOCOMPLETE_URL = "https://places.googleapis.com/v1/places:autocomplete";
@@ -9,7 +8,7 @@ export function placesEnabled() {
   return Boolean(API_KEY);
 }
 
-export function mapsUrl(placeId) {
+function mapsUrl(placeId) {
   return `https://www.google.com/maps/place/?q=place_id:${placeId}`;
 }
 
@@ -24,10 +23,10 @@ async function fetchWithTimeout(url, options, ms = 2500) {
 }
 
 /**
- * Autocomplete PH cafes for a free-text input.
- * @returns {Promise<Array<{placeId: string, name: string, address: string|null}>>}
+ * Autocomplete PH places of a given primary type ("cafe" | "restaurant").
+ * @returns {Promise<Array<{id: string, name: string, subtitle: string|null, link: string}>>}
  */
-export async function autocompleteCafes(input) {
+export async function placesAutocomplete(input, type) {
   if (!API_KEY || !input || !input.trim()) return [];
   try {
     const res = await fetchWithTimeout(AUTOCOMPLETE_URL, {
@@ -36,7 +35,7 @@ export async function autocompleteCafes(input) {
       body: JSON.stringify({
         input,
         includedRegionCodes: ["ph"],
-        includedPrimaryTypes: ["cafe"],
+        includedPrimaryTypes: [type],
         languageCode: "en",
       }),
     });
@@ -47,27 +46,26 @@ export async function autocompleteCafes(input) {
       .map((s) => s.placePrediction)
       .filter(Boolean)
       .map((p) => ({
-        placeId: p.placeId,
+        id: p.placeId,
         name: p.structuredFormat?.mainText?.text ?? p.text?.text ?? "",
-        address: p.structuredFormat?.secondaryText?.text ?? null,
+        subtitle: p.structuredFormat?.secondaryText?.text ?? null,
+        link: mapsUrl(p.placeId),
       }))
-      .filter((p) => p.placeId && p.name);
+      .filter((p) => p.id && p.name);
   } catch {
     return [];
   }
 }
 
 /**
- * Resolve a place id to {name, address} via Place Details (New). Used only as a
- * fallback when the in-memory autocomplete cache was lost (e.g. a bot restart
- * between picking a suggestion and submitting the command).
- * @returns {Promise<{name: string|null, address: string|null}|null>}
+ * Resolve a place id (fallback when the autocomplete cache was lost).
+ * @returns {Promise<{name: string, subtitle: string|null, link: string}|null>}
  */
-export async function getPlaceDetails(placeId) {
-  if (!API_KEY || !placeId) return null;
+export async function placeDetails(id) {
+  if (!API_KEY || !id) return null;
   try {
     const res = await fetchWithTimeout(
-      `https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}`,
+      `https://places.googleapis.com/v1/places/${encodeURIComponent(id)}`,
       {
         headers: {
           "X-Goog-Api-Key": API_KEY,
@@ -77,7 +75,8 @@ export async function getPlaceDetails(placeId) {
     );
     if (!res.ok) return null;
     const data = await res.json();
-    return { name: data.displayName?.text ?? null, address: data.formattedAddress ?? null };
+    if (!data.displayName?.text) return null;
+    return { name: data.displayName.text, subtitle: data.formattedAddress ?? null, link: mapsUrl(id) };
   } catch {
     return null;
   }
