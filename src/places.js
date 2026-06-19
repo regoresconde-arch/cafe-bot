@@ -81,3 +81,33 @@ export async function placeDetails(id) {
     return null;
   }
 }
+
+/**
+ * Resolve a key-free photo URL for a place id, or null. Two calls: fetch a
+ * photo resource name, then ask the media endpoint for a redirect-free URL
+ * (skipHttpRedirect avoids leaking the API key into the returned link).
+ * @returns {Promise<string|null>}
+ */
+export async function placeImage(id) {
+  if (!API_KEY || !id) return null;
+  try {
+    const res = await fetchWithTimeout(
+      `https://places.googleapis.com/v1/places/${encodeURIComponent(id)}`,
+      { headers: { "X-Goog-Api-Key": API_KEY, "X-Goog-FieldMask": "photos" } },
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    const photoName = data.photos?.[0]?.name;
+    if (!photoName) return null;
+
+    const media = await fetchWithTimeout(
+      `https://places.googleapis.com/v1/${photoName}/media?maxHeightPx=400&maxWidthPx=600&skipHttpRedirect=true`,
+      { headers: { "X-Goog-Api-Key": API_KEY } },
+    );
+    if (!media.ok) return null;
+    const mj = await media.json();
+    return mj.photoUri ?? null;
+  } catch {
+    return null;
+  }
+}

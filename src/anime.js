@@ -21,6 +21,7 @@ function shape(a) {
     name,
     subtitle: bits.length ? bits.join(" · ") : null,
     link: a.url ?? null,
+    image: a.images?.jpg?.large_image_url ?? a.images?.jpg?.image_url ?? null,
   };
 }
 

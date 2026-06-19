@@ -10,7 +10,7 @@ import {
 } from "discord.js";
 import { addEntry, listEntries, deleteEntry } from "./db.js";
 import { CATEGORIES, logName, deleteName, byKey } from "./categories.js";
-import { placesAutocomplete, placeDetails } from "./places.js";
+import { placesAutocomplete, placeDetails, placeImage } from "./places.js";
 import { tmdbSearch, tmdbDetails } from "./tmdb.js";
 import { animeSearch, animeDetails } from "./anime.js";
 
@@ -109,7 +109,7 @@ async function handleAutocomplete(interaction, cat) {
     if (value.length > 100) value = r.name.slice(0, 100);
     if (seen.has(value)) continue; // Discord rejects duplicate choice values
     seen.add(value);
-    rememberPick(value, { name: r.name, subtitle: r.subtitle, link: r.link });
+    rememberPick(value, { name: r.name, subtitle: r.subtitle, link: r.link, image: r.image ?? null });
     const label = (r.subtitle ? `${r.name} — ${r.subtitle}` : r.name).slice(0, 100);
     choices.push({ name: label, value });
     if (choices.length >= 25) break;
@@ -125,27 +125,34 @@ async function handleLog(interaction, cat) {
   let name = raw;
   let subtitle = null;
   let link = null;
+  let image = null;
+  // The submitted value of a chosen suggestion is "#<id>"; keep the id so we can
+  // lazily fetch a place photo later (places don't return one at autocomplete time).
+  const id = raw.startsWith("#") ? raw.slice(1) : null;
 
   const cached = pickCache.get(raw);
   if (cached) {
-    ({ name, subtitle, link } = cached);
+    ({ name, subtitle, link, image } = cached);
   } else if (raw.startsWith("#")) {
     // A suggestion was chosen but the cache was lost (e.g. restart) — resolve it.
     await interaction.deferReply({ ephemeral: true });
-    const details = await lookupDetails(cat, raw.slice(1));
+    const details = await lookupDetails(cat, id);
     if (!details?.name) {
       return interaction.editReply(`Couldn't fetch that ${cat.noun} just now — try \`/${logName(cat.key)}\` again.`);
     }
     ({ name, subtitle, link } = details);
+    image = details.image ?? null;
   }
 
   const token = makeToken();
   pending.set(token, {
     category: cat.key,
+    id,
     name,
     subtitle,
     notes,
     link,
+    image,
     loggedBy: interaction.user.id,
     loggedName: interaction.member?.displayName ?? interaction.user.username,
     guildId: interaction.guildId,
@@ -194,13 +201,22 @@ async function handleStarClick(interaction) {
     components: [],
   });
 
+  // Places don't return a photo at autocomplete time — fetch one now (the update
+  // above already acknowledged the click, so this extra call has no time limit).
+  let image = data.image;
+  if (!image && data.id && cat?.lookup.kind === "places") {
+    image = await placeImage(data.id);
+  }
+
   const embed = new EmbedBuilder()
     .setTitle(`${cat?.emoji ?? ""} ${data.name}`.trim())
-    .setDescription([starsText(stars), data.subtitle].filter(Boolean).join("\n"))
+    .setDescription(starsText(stars))
     .setFooter({ text: `Logged by ${data.loggedName}` })
     .setTimestamp(new Date());
+  if (data.subtitle) embed.addFields({ name: cat?.subtitleLabel ?? "Details", value: data.subtitle });
   if (data.notes) embed.addFields({ name: "Notes", value: data.notes });
   if (data.link) embed.setURL(data.link);
+  if (image) embed.setImage(image);
 
   await interaction.followUp({ embeds: [embed] });
 }

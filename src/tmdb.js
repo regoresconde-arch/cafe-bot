@@ -21,6 +21,7 @@ async function fetchWithTimeout(url, ms = 2500) {
 const title = (r) => r.title ?? r.name ?? "";
 const year = (r) => (r.release_date || r.first_air_date || "").slice(0, 4) || null;
 const link = (type, id) => `https://www.themoviedb.org/${type}/${id}`;
+const poster = (r) => (r.poster_path ? `https://image.tmdb.org/t/p/w500${r.poster_path}` : null);
 
 /**
  * Search TMDB for a movie ("movie") or TV show ("tv").
@@ -35,7 +36,7 @@ export async function tmdbSearch(type, input) {
     const data = await res.json();
     const results = Array.isArray(data.results) ? data.results : [];
     return results
-      .map((r) => ({ id: String(r.id), name: title(r), subtitle: year(r), link: link(type, r.id) }))
+      .map((r) => ({ id: String(r.id), name: title(r), subtitle: year(r), link: link(type, r.id), image: poster(r) }))
       .filter((r) => r.name);
   } catch {
     return [];
@@ -53,7 +54,7 @@ export async function tmdbDetails(type, id) {
     if (!res.ok) return null;
     const r = await res.json();
     if (!title(r)) return null;
-    return { name: title(r), subtitle: year(r), link: link(type, id) };
+    return { name: title(r), subtitle: year(r), link: link(type, id), image: poster(r) };
   } catch {
     return null;
   }
