@@ -8,6 +8,16 @@ import { execFile } from "node:child_process";
 const CLAUDE_BIN = process.env.CLAUDE_BIN || "claude";
 const MODEL = process.env.CLAUDE_MODEL || "claude-sonnet-4-6";
 
+// Tools the chat is allowed to use. Defaults to web lookup only (for
+// recommendations) — every task tool (Bash, Write, Edit, Read, etc.) is
+// unavailable, so the bot can only converse. Set CHAT_TOOLS="" (or "none")
+// for pure conversation with no web access.
+const CHAT_TOOLS = (process.env.CHAT_TOOLS ?? "WebSearch WebFetch").trim();
+const TOOL_LIST =
+  CHAT_TOOLS === "" || CHAT_TOOLS.toLowerCase() === "none"
+    ? []
+    : CHAT_TOOLS.split(/[\s,]+/).filter(Boolean);
+
 export function llmConfigured() {
   return Boolean(process.env.CLAUDE_CODE_OAUTH_TOKEN || process.env.ANTHROPIC_API_KEY);
 }
@@ -17,7 +27,7 @@ export function llmConfigured() {
  * (so it's a pure persona chat, not a coding assistant). Returns the reply text.
  * Args are passed via execFile (no shell), so user content can't be injected.
  */
-export function chat({ system, prompt, timeoutMs = 60000 }) {
+export function chat({ system, prompt, timeoutMs = 90000 }) {
   return new Promise((resolve, reject) => {
     const args = [
       "-p",
@@ -29,6 +39,14 @@ export function chat({ system, prompt, timeoutMs = 60000 }) {
       "--output-format",
       "json",
     ];
+
+    // Restrict the available tool set. With a list, also pre-approve those tools
+    // so they run without a permission prompt in headless mode.
+    if (TOOL_LIST.length) {
+      args.push("--tools", ...TOOL_LIST, "--allowedTools", ...TOOL_LIST);
+    } else {
+      args.push("--tools", "");
+    }
 
     execFile(
       CLAUDE_BIN,
