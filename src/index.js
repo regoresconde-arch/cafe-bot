@@ -13,6 +13,8 @@ import { CATEGORIES, logName, deleteName, byKey } from "./categories.js";
 import { placesAutocomplete, placeDetails, placeImage } from "./places.js";
 import { tmdbSearch, tmdbDetails } from "./tmdb.js";
 import { animeSearch, animeDetails } from "./anime.js";
+import { chat, llmConfigured } from "./llm.js";
+import { buildSystem, buildPrompt } from "./persona.js";
 
 const { DISCORD_TOKEN } = process.env;
 if (!DISCORD_TOKEN) {
@@ -20,7 +22,16 @@ if (!DISCORD_TOKEN) {
   process.exit(1);
 }
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+// GuildMessages + MessageContent are needed to read messages that @mention the
+// bot. MessageContent is a privileged intent — enable it in the Developer Portal
+// (Bot → Privileged Gateway Intents → Message Content Intent).
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+  ],
+});
 
 // Command-name -> category lookups, built from the shared config.
 const byLog = new Map(CATEGORIES.map((c) => [logName(c.key), c]));
@@ -42,6 +53,11 @@ function rememberPick(value, info) {
 function makeToken() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
+
+// Per-channel short-term chat memory for @mention conversations.
+const convo = new Map();
+const CONVO_TURNS = 12; // keep ~12 exchanges
+const CONVO_IDLE_MS = 30 * 60 * 1000; // reset after 30 min idle
 
 const STAR = "⭐";
 const starsText = (n) => STAR.repeat(n) + "☆".repeat(5 - n);
@@ -294,5 +310,56 @@ async function handleDeleteSelect(interaction) {
     components: [],
   });
 }
+
+// Casual conversation when the bot is @mentioned.
+client.on("messageCreate", async (message) => {
+  try {
+    if (message.author.bot || !client.user) return;
+    if (!message.mentions.has(client.user) || message.mentions.everyone) return;
+
+    const content = message.content.replace(/<@!?\d+>/g, "").trim();
+    if (!content) {
+      await message.reply("oy? anong kailangan mo? 👀");
+      return;
+    }
+    if (!llmConfigured()) {
+      await message.reply("_(chat isn't set up yet — no Claude token configured)_");
+      return;
+    }
+
+    const speaker = message.member?.displayName ?? message.author.username;
+
+    const now = Date.now();
+    let state = convo.get(message.channelId);
+    if (!state || now - state.updated > CONVO_IDLE_MS) state = { turns: [], updated: now };
+
+    await message.channel.sendTyping();
+
+    let reply;
+    try {
+      reply = await chat({
+        system: buildSystem(speaker),
+        prompt: buildPrompt(state.turns, speaker, content),
+      });
+    } catch (err) {
+      console.error("Chat error:", err.message);
+      await message.reply("sandali, nag-glitch ako 😵‍💫 try mo ulit.");
+      return;
+    }
+    reply = reply || "...";
+
+    state.turns.push({ role: "user", name: speaker, content });
+    state.turns.push({ role: "assistant", name: "you", content: reply });
+    if (state.turns.length > CONVO_TURNS * 2) {
+      state.turns.splice(0, state.turns.length - CONVO_TURNS * 2);
+    }
+    state.updated = now;
+    convo.set(message.channelId, state);
+
+    await message.reply(reply.length > 1900 ? `${reply.slice(0, 1900)}…` : reply);
+  } catch (err) {
+    console.error("messageCreate error:", err);
+  }
+});
 
 client.login(DISCORD_TOKEN);
