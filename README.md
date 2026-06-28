@@ -64,9 +64,9 @@ On the **OAuth2 → URL Generator** page, tick **`bot`** and **`applications.com
 scopes (no extra permissions are required since the bot only uses slash commands and
 posts messages). Open the generated URL and add the bot to your server.
 
-For the **@mention chat** feature, enable the privileged intent: **Bot →
-Privileged Gateway Intents → Message Content Intent → ON**. (Slash commands work
-without it; reading @mention text requires it.)
+The **@mention chat** feature needs **no** privileged intent — Discord includes
+message content for messages that @mention the bot. (If you later want the bot to
+read *all* messages, that would require the Message Content Intent.)
 
 ### 3. Configure
 ```sh

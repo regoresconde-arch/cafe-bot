@@ -22,15 +22,12 @@ if (!DISCORD_TOKEN) {
   process.exit(1);
 }
 
-// GuildMessages + MessageContent are needed to read messages that @mention the
-// bot. MessageContent is a privileged intent — enable it in the Developer Portal
-// (Bot → Privileged Gateway Intents → Message Content Intent).
+// GuildMessages lets us receive messageCreate events. We deliberately do NOT
+// request the privileged MessageContent intent: Discord still includes message
+// content for messages that @mention the bot, which is all this feature needs —
+// and requesting it un-toggled would block login entirely.
 const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent,
-  ],
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages],
 });
 
 // Command-name -> category lookups, built from the shared config.
