@@ -22,6 +22,29 @@ export function llmConfigured() {
   return Boolean(process.env.CLAUDE_CODE_OAUTH_TOKEN || process.env.ANTHROPIC_API_KEY);
 }
 
+// Web search likes to append citations/links even when told not to. Strip them
+// so recos read as plain chat: keep the label of markdown links, drop bare URLs,
+// citation markers, and any trailing Sources/References block.
+function stripSources(text) {
+  return text
+    // markdown links -> keep just the label
+    .replace(/\[([^\]]+)\]\((?:https?:\/\/|www\.)[^)]+\)/gi, "$1")
+    // trailing Sources/References/Citations block
+    .replace(/\n+\s*(?:sources?|references?|citations?)\b[\s\S]*$/i, "")
+    // bare URLs (optionally wrapped in parens)
+    .replace(/\(?\s*(?:https?:\/\/|www\.)[^\s)]+\s*\)?/gi, "")
+    // numeric citation markers like [1] or [1, 2]
+    .replace(/\[\d+(?:\s*,\s*\d+)*\]/g, "")
+    // a dangling "References:" label left behind after URL removal
+    .replace(/\s*(?:sources?|references?|citations?)\s*:\s*$/i, "")
+    // tidy: no space before punctuation, no doubled spaces, no dangling blank lines
+    .replace(/[ \t]+([,.!?;:])/g, "$1")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 /**
  * Single-turn completion. `system` fully replaces Claude Code's default prompt
  * (so it's a pure persona chat, not a coding assistant). Returns the reply text.
@@ -59,7 +82,7 @@ export function chat({ system, prompt, timeoutMs = 90000 }) {
         try {
           const json = JSON.parse(stdout);
           if (json.is_error) return reject(new Error(json.result || "Claude returned an error"));
-          resolve((json.result ?? "").trim());
+          resolve(stripSources(json.result ?? ""));
         } catch (e) {
           reject(new Error(`Could not parse Claude output: ${e.message}`));
         }
